@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,10 +51,12 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
@@ -352,7 +356,10 @@ private fun GameTileView(
 @Composable
 private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifier) {
     var status by remember(source.url) { mutableStateOf<String?>("Tuning…") }
-    Box(modifier) {
+    // TCL's tuner only fits video to views smaller than 1280x720 px; at that size or larger it
+    // switches to full screen and covers the whole layout. So the tuner view stays just under it.
+    val maxVideo = with(LocalDensity.current) { DpSize(1276.toDp(), 717.toDp()) }
+    Box(modifier, contentAlignment = Alignment.Center) {
         AndroidView(
             factory = { ctx ->
                 TvView(ctx).apply {
@@ -390,7 +397,7 @@ private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifie
                 view.setStreamVolume(if (hasAudio) 1f else 0f)
             },
             onRelease = { it.reset() },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.sizeIn(maxWidth = maxVideo.width, maxHeight = maxVideo.height).aspectRatio(16f / 9f),
         )
         status?.let { Badge(it, Color.Black.copy(alpha = 0.7f), Palette.Muted, Modifier.align(Alignment.Center)) }
     }

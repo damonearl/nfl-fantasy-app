@@ -126,9 +126,12 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
         // Hardware tuner inputs have ids ending in "/HW<n>"; app-provided inputs (Pluto etc.) don't.
         val input = tuners.firstOrNull { it.serviceInfo.packageName == TclChannels.TUNER_PACKAGE && "/HW" in it.id }
             ?: return emptyList()
-        return TclChannels.load(context).orEmpty().map { entry ->
+        val entries = TclChannels.load(context).orEmpty()
+        if (entries.isEmpty()) return emptyList()
+        val carrier = TclChannels.carrierRowId(context) ?: return emptyList()
+        return entries.map { entry ->
             Channel(
-                uri = TvContract.buildChannelUri(entry.key.toLong()).toString(),
+                uri = TvContract.buildChannelUri(carrier).toString(),
                 inputId = input.id,
                 number = entry.number,
                 name = entry.name,

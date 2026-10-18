@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Read the TV's scanned antenna channels and guide. -->
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
+    <!-- TCL tuners need a channel row to tune through; see TclChannels. -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
