@@ -6,13 +6,22 @@ import com.damonearl.fantasymultiview.data.NflGame
 import com.damonearl.fantasymultiview.data.NflTeam
 import kotlinx.coroutines.CancellationException
 
-enum class SourceKind { MANUAL, ANTENNA, PLAYLIST }
+enum class SourceKind {
+    MANUAL,
+    /** HDHomeRun network tuner (an HTTP stream). */
+    ANTENNA,
+    /** The TV's built-in tuner; [StreamSource.url] is a channel URI played through a TvView. */
+    TUNER,
+    PLAYLIST,
+}
 
 data class StreamSource(
     val url: String,
     val headers: Map<String, String> = emptyMap(),
     val label: String,
     val kind: SourceKind,
+    /** TV input that owns the channel, for [SourceKind.TUNER] sources. */
+    val inputId: String? = null,
 ) {
     companion object {
         /** Parses "url" or Kodi-style "url|Referer=...&User-Agent=..." specs. */

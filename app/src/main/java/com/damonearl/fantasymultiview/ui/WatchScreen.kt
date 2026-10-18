@@ -1,5 +1,8 @@
 package com.damonearl.fantasymultiview.ui
 
+import android.media.tv.TvInputManager
+import android.media.tv.TvView
+import android.net.Uri
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -61,9 +64,13 @@ import com.damonearl.fantasymultiview.data.GameState
 import com.damonearl.fantasymultiview.data.NflGame
 import com.damonearl.fantasymultiview.player.PlayerPool
 import com.damonearl.fantasymultiview.player.TileStatus
+import com.damonearl.fantasymultiview.streams.SourceKind
+import com.damonearl.fantasymultiview.streams.StreamSource
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
+
+private val PANEL_WIDTH = 140.dp
 
 @Composable
 fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit) {
@@ -81,7 +88,7 @@ fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit)
             accent = Palette.Mine,
             gameFor = gamesByTeam::get,
             leading = mine != null && opp != null && mine.total > opp.total,
-            modifier = Modifier.width(210.dp),
+            modifier = Modifier.width(PANEL_WIDTH),
         )
         CenterColumn(
             state = state,
@@ -95,7 +102,7 @@ fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit)
             accent = Palette.Opp,
             gameFor = gamesByTeam::get,
             leading = mine != null && opp != null && opp.total > mine.total,
-            modifier = Modifier.width(210.dp),
+            modifier = Modifier.width(PANEL_WIDTH),
         )
     }
 }
@@ -147,6 +154,7 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
                                     GameTileView(
                                         game = tile.game,
                                         sourceLabel = tile.stream?.label,
+                                        tuner = tile.stream?.takeIf { it.kind == SourceKind.TUNER },
                                         player = if (tile.stream != null) players.player(id) else null,
                                         status = players.status[id],
                                         involved = starters.filter { (p, _) -> tile.game.involves(p.proTeam) },
@@ -260,6 +268,7 @@ fun FocusButton(text: String, modifier: Modifier = Modifier, accent: Color = Pal
 private fun GameTileView(
     game: NflGame,
     sourceLabel: String?,
+    tuner: StreamSource?,
     player: ExoPlayer?,
     status: TileStatus?,
     involved: List<Pair<FantasyPlayer, Boolean>>,
@@ -272,7 +281,9 @@ private fun GameTileView(
             .background(Color.Black)
             .border(if (focused) 3.dp else 1.dp, if (focused) Palette.Focus else Palette.Line),
     ) {
-        if (player != null) {
+        if (tuner != null) {
+            TunerView(tuner, hasAudio, Modifier.fillMaxSize().padding(if (focused) 3.dp else 1.dp))
+        } else if (player != null) {
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
@@ -330,6 +341,54 @@ private fun GameTileView(
                 }
             }
         }
+    }
+}
+
+/** Shows a channel from the TV's built-in tuner. */
+@Composable
+private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifier) {
+    var status by remember(source.url) { mutableStateOf<String?>("Tuning…") }
+    Box(modifier) {
+        AndroidView(
+            factory = { ctx ->
+                TvView(ctx).apply {
+                    isFocusable = false
+                    setCallback(object : TvView.TvInputCallback() {
+                        override fun onVideoAvailable(inputId: String) {
+                            status = null
+                        }
+
+                        override fun onVideoUnavailable(inputId: String, reason: Int) {
+                            status = when (reason) {
+                                TvInputManager.VIDEO_UNAVAILABLE_REASON_TUNING,
+                                TvInputManager.VIDEO_UNAVAILABLE_REASON_BUFFERING -> "Tuning…"
+                                TvInputManager.VIDEO_UNAVAILABLE_REASON_WEAK_SIGNAL -> "Weak antenna signal"
+                                else -> "No signal on this channel"
+                            }
+                        }
+
+                        override fun onConnectionFailed(inputId: String) {
+                            status = "The TV tuner is busy or unavailable"
+                        }
+
+                        override fun onDisconnected(inputId: String) {
+                            status = "The TV tuner disconnected"
+                        }
+                    })
+                }
+            },
+            update = { view ->
+                val uri = Uri.parse(source.url)
+                if (view.tag != uri) {
+                    view.tag = uri
+                    view.tune(source.inputId ?: return@AndroidView, uri)
+                }
+                view.setStreamVolume(if (hasAudio) 1f else 0f)
+            },
+            onRelease = { it.reset() },
+            modifier = Modifier.fillMaxSize(),
+        )
+        status?.let { Badge(it, Color.Black.copy(alpha = 0.7f), Palette.Muted, Modifier.align(Alignment.Center)) }
     }
 }
 

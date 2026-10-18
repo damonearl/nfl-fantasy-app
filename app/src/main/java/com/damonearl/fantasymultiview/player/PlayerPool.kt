@@ -122,7 +122,8 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
     }
 
     private fun applyAudio() {
-        val target = audioGameId?.takeIf { it in entries } ?: entries.keys.firstOrNull()
+        // A focused tile this pool doesn't own (e.g. the TV tuner) keeps every stream here muted.
+        val target = if (audioGameId == null) entries.keys.firstOrNull() else audioGameId
         entries.forEach { (id, e) -> e.player.volume = if (id == target) 1f else 0f }
     }
 

@@ -21,6 +21,7 @@ import com.damonearl.fantasymultiview.streams.ManualStreamProvider
 import com.damonearl.fantasymultiview.streams.SourceKind
 import com.damonearl.fantasymultiview.streams.StreamResolver
 import com.damonearl.fantasymultiview.streams.StreamSource
+import com.damonearl.fantasymultiview.streams.TvTunerProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,8 +67,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val settingsStore = SettingsStore(app)
     private val fantasy = EspnFantasyClient(http, json)
     private val scoreboard = NflScoreboardClient(http, json)
-    private val antenna = HdHomeRunProvider(http, json)
-    private val streams = StreamResolver(listOf(ManualStreamProvider(), antenna, M3uStreamProvider(http)))
+    private val tuner = TvTunerProvider(app)
+    // HDHomeRun is only searched for when the TV's own tuner has nothing, or an address is set.
+    private val antenna = HdHomeRunProvider(http, json, shouldRun = { it.antennaHost.isNotBlank() || !tuner.hasChannels })
+    private val streams = StreamResolver(listOf(ManualStreamProvider(), tuner, antenna, M3uStreamProvider(http)))
     val players = PlayerPool(app, http)
 
     private val _state = MutableStateFlow(UiState(settings = settingsStore.settings.value))
@@ -124,12 +127,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 league to scoreboard.fetch(settings.season, league.scoringPeriod)
             }
             val (tiles, others) = layoutGames(league.matchup, games, settings)
-            players.sync(tiles.mapNotNull { t -> t.stream?.let { t.game.id to it } }.toMap())
+            // Built-in tuner tiles play through a TvView, not ExoPlayer.
+            players.sync(tiles.mapNotNull { t -> t.stream?.takeIf { it.kind != SourceKind.TUNER }?.let { t.game.id to it } }.toMap())
             _state.update {
                 it.copy(
                     league = league, games = games, tiles = tiles, otherGames = others,
                     loading = false, error = null,
-                    antennaError = if (settings.antennaEnabled) antenna.lastError else null,
+                    antennaError = when {
+                        !settings.antennaEnabled || tuner.hasChannels -> null
+                        antenna.tunerCount != null -> antenna.lastError
+                        else -> tuner.lastError ?: antenna.lastError
+                    },
                     lastUpdated = Instant.now(),
                 )
             }
@@ -161,13 +169,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val ordered = (previousOrder + (live + upcoming).map { it.id }.filter { it in chosen && it !in previousOrder })
             .map { id -> relevant.first { it.id == id } }
 
-        // Antenna tiles are capped by the tuner count; overflow games fall through to other sources.
-        var tunersLeft = Int.MAX_VALUE
+        // Antenna tiles are capped by tuner count; overflow games fall through to other sources.
+        fun capacity(kind: SourceKind) = when (kind) {
+            SourceKind.TUNER -> tuner.tunerCount
+            SourceKind.ANTENNA -> antenna.tunerCount ?: Int.MAX_VALUE
+            else -> Int.MAX_VALUE
+        }
+        val used = mutableMapOf<SourceKind, Int>()
         val tiles = ordered.map { game ->
             val candidates = streams.candidates(game, games, settings)
-            if (tunersLeft == Int.MAX_VALUE) tunersLeft = antenna.tunerCount ?: Int.MAX_VALUE
-            val pick = candidates.firstOrNull { it.kind != SourceKind.ANTENNA || tunersLeft > 0 }
-            if (pick?.kind == SourceKind.ANTENNA) tunersLeft--
+            val pick = candidates.firstOrNull { (used[it.kind] ?: 0) < capacity(it.kind) }
+            pick?.let { used[it.kind] = (used[it.kind] ?: 0) + 1 }
             GameTile(game, pick)
         }
         val others = relevant.filter { it.id !in chosen }

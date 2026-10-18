@@ -1,5 +1,6 @@
 package com.damonearl.fantasymultiview
 
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -23,6 +24,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // A normal permission on most TVs; some builds make it a runtime prompt.
+        if (checkSelfPermission(EPG_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(EPG_PERMISSION), 1)
+        }
 
         setContent {
             AppTheme {
@@ -53,5 +58,9 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         viewModel.players.pauseAll()
         super.onStop()
+    }
+
+    private companion object {
+        const val EPG_PERMISSION = "com.android.providers.tv.permission.READ_EPG_DATA"
     }
 }
