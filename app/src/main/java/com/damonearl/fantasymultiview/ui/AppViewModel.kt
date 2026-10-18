@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.damonearl.fantasymultiview.config.ConfigServer
+import com.damonearl.fantasymultiview.config.SetupStatus
 import com.damonearl.fantasymultiview.data.AppSettings
 import com.damonearl.fantasymultiview.data.DemoLeague
 import com.damonearl.fantasymultiview.data.EspnFantasyClient
@@ -76,6 +77,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         store = settingsStore,
         teams = { _state.value.league?.teams.orEmpty() },
         games = { _state.value.games },
+        status = { setupStatus(_state.value) },
     )
 
     init {
@@ -83,13 +85,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             // collectLatest restarts the poll loop immediately whenever settings change.
             settingsStore.settings.collectLatest { settings ->
-                _state.update { it.copy(settings = settings) }
+                _state.update {
+                    // Drop results from the old league so setup shows "checking" until the new one answers.
+                    val sameLeague = it.settings.leagueId == settings.leagueId && it.settings.season == settings.season
+                    it.copy(settings = settings, error = null, league = it.league.takeIf { sameLeague })
+                }
                 if (!settings.isConfigured) return@collectLatest
                 while (true) {
                     refresh(settings)
                     delay(POLL_MS)
                 }
             }
+        }
+    }
+
+    private fun setupStatus(state: UiState): SetupStatus {
+        val matchup = state.matchup
+        return when {
+            !state.settings.isConfigured -> SetupStatus.NotStarted
+            state.error != null -> SetupStatus.Failed(state.error)
+            matchup != null -> SetupStatus.Connected("${matchup.mine.name} vs ${matchup.opponent?.name ?: "bye week"}")
+            state.league != null && !state.loading -> SetupStatus.NeedTeam
+            else -> SetupStatus.Checking
         }
     }
 
