@@ -8,6 +8,7 @@ import com.damonearl.fantasymultiview.config.SetupStatus
 import com.damonearl.fantasymultiview.data.AppSettings
 import com.damonearl.fantasymultiview.data.DemoLeague
 import com.damonearl.fantasymultiview.data.EspnFantasyClient
+import com.damonearl.fantasymultiview.data.FailedRequestLogger
 import com.damonearl.fantasymultiview.data.FantasyLeague
 import com.damonearl.fantasymultiview.data.FantasyMatchup
 import com.damonearl.fantasymultiview.data.GameState
@@ -57,6 +58,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addNetworkInterceptor(FailedRequestLogger())
         .build()
     private val json = Json {
         ignoreUnknownKeys = true

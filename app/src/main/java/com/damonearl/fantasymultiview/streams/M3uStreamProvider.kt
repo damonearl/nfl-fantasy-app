@@ -34,7 +34,8 @@ class M3uStreamProvider(private val http: OkHttpClient) : StreamProvider {
         if (!fresh) {
             channels = withContext(Dispatchers.IO) {
                 http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                    if (!response.isSuccessful) error("Playlist returned HTTP ${response.code}")
+                    // Full request/response details are logged under the HttpDebug tag.
+                    if (!response.isSuccessful) error("Playlist returned HTTP ${response.code} ${response.message}".trimEnd())
                     parse(response.body?.string().orEmpty())
                 }
             }
