@@ -3,6 +3,7 @@ package com.damonearl.fantasymultiview.ui
 import android.media.tv.TvInputManager
 import android.media.tv.TvView
 import android.net.Uri
+import android.os.Bundle
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -139,45 +141,47 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
     Column(modifier.fillMaxHeight().padding(horizontal = 10.dp, vertical = 10.dp)) {
         TopBar(state, onOpenSettings)
         Spacer(Modifier.height(8.dp))
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val visible = if (expandedId != null) tiles.filter { it.game.id == expandedId } else tiles
             if (visible.isEmpty()) {
-                EmptyGrid(state)
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyGrid(state) }
             } else {
-                val (cols, tileWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap = 6.dp)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    visible.chunked(cols).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            row.forEach { tile ->
-                                val id = tile.game.id
-                                key(id) {
-                                    GameTileView(
-                                        game = tile.game,
-                                        sourceLabel = tile.stream?.label,
-                                        tuner = tile.stream?.takeIf { it.kind == SourceKind.TUNER },
-                                        player = if (tile.stream != null) players.player(id) else null,
-                                        status = players.status[id],
-                                        involved = starters.filter { (p, _) -> tile.game.involves(p.proTeam) },
-                                        focused = focusedId == id,
-                                        hasAudio = focusedId == id && tile.stream != null,
-                                        modifier = Modifier
-                                            .size(tileWidth, tileWidth * 9f / 16f)
-                                            .focusRequester(requester(id))
-                                            .onFocusChanged { if (it.isFocused) focusedId = id }
-                                            .onKeyEvent { e ->
-                                                val select = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
-                                                if (select && e.type == KeyEventType.KeyUp) {
-                                                    expandedId = if (expandedId == id) null else id
-                                                    true
-                                                } else {
-                                                    select
-                                                }
-                                            }
-                                            .focusable(),
-                                    )
+                val gap = 6.dp
+                val (cols, tileWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap)
+                val rows = (visible.size + cols - 1) / cols
+                val tileHeight = tileWidth * 9f / 16f
+                val left = (maxWidth - tileWidth * cols - gap * (cols - 1)) / 2
+                val top = (maxHeight - tileHeight * rows - gap * (rows - 1)) / 2
+                // Every tile sits directly in this Box, placed by offset, so zooming one only resizes it:
+                // its player (and the TV tuner session) carries over instead of being rebuilt.
+                visible.forEachIndexed { index, tile ->
+                    val id = tile.game.id
+                    key(id) {
+                        GameTileView(
+                            game = tile.game,
+                            sourceLabel = tile.stream?.label,
+                            tuner = tile.stream?.takeIf { it.kind == SourceKind.TUNER },
+                            player = if (tile.stream != null) players.player(id) else null,
+                            status = players.status[id],
+                            involved = starters.filter { (p, _) -> tile.game.involves(p.proTeam) },
+                            focused = focusedId == id,
+                            hasAudio = focusedId == id && tile.stream != null,
+                            modifier = Modifier
+                                .offset(left + (tileWidth + gap) * (index % cols), top + (tileHeight + gap) * (index / cols))
+                                .size(tileWidth, tileHeight)
+                                .focusRequester(requester(id))
+                                .onFocusChanged { if (it.isFocused) focusedId = id }
+                                .onKeyEvent { e ->
+                                    val select = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
+                                    if (select && e.type == KeyEventType.KeyUp) {
+                                        expandedId = if (expandedId == id) null else id
+                                        true
+                                    } else {
+                                        select
+                                    }
                                 }
-                            }
-                        }
+                                .focusable(),
+                        )
                     }
                 }
             }
@@ -378,10 +382,10 @@ private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifie
                 }
             },
             update = { view ->
-                val uri = Uri.parse(source.url)
-                if (view.tag != uri) {
-                    view.tag = uri
-                    view.tune(source.inputId ?: return@AndroidView, uri)
+                if (view.tag != source) {
+                    view.tag = source
+                    val extras = Bundle().apply { source.tuneExtras.forEach { (k, v) -> putInt(k, v) } }
+                    view.tune(source.inputId ?: return@AndroidView, Uri.parse(source.url), extras)
                 }
                 view.setStreamVolume(if (hasAudio) 1f else 0f)
             },

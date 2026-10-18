@@ -33,6 +33,8 @@ class ConfigServer(
     private val teams: () -> List<FantasyTeamInfo>,
     private val games: () -> List<NflGame>,
     private val status: () -> SetupStatus,
+    /** The TV tuner's scanned channels as (number, name); empty if unknown. */
+    private val antennaChoices: () -> List<Pair<String, String>>,
 ) {
     private val token = store.setupToken
 
@@ -181,8 +183,19 @@ class ConfigServer(
         val tileOptions = (1..4).joinToString("") { n ->
             """<option${if (n == s.maxTiles) " selected" else ""}>$n</option>"""
         }
+        val choices = antennaChoices()
         val channelRows = OTA_NETWORKS.joinToString("") { n ->
-            """<label>$n is on channel<input name="ch_$n" value="${esc(s.antennaChannels[n].orEmpty())}" placeholder="auto-detect (e.g. 2.1)"></label>"""
+            val current = s.antennaChannels[n].orEmpty()
+            if (choices.isEmpty()) {
+                """<label>$n is on channel<input name="ch_$n" value="${esc(current)}" placeholder="e.g. 2.1"></label>"""
+            } else {
+                // Keep a saved number selectable even if the latest scan no longer has it.
+                val all = if (current.isEmpty() || choices.any { it.first == current }) choices else listOf(current to "") + choices
+                val options = all.joinToString("") { (number, name) ->
+                    """<option value="${esc(number)}"${if (number == current) " selected" else ""}>${esc("$number $name".trim())}</option>"""
+                }
+                """<label>$n is on channel<select name="ch_$n"><option value="">Not set</option>$options</select></label>"""
+            }
         }
         val gameRows = if (upcoming.isEmpty()) "<p class=muted>Games appear here once your league connects.</p>" else
             upcoming.joinToString("") { g ->
@@ -253,17 +266,20 @@ $teamStep
 <label>Games shown at once<select name="max_tiles">$tileOptions</select></label>
 <label>Season<input name="season" inputmode="numeric" value="${s.season}"></label>
 </div>
-<div class=step><h2>Antenna (HDHomeRun)</h2>
+<div class=step><h2>Antenna</h2>
+<p class=muted style="margin-top:0">Uses the antenna plugged into this TV. Pick the channel each network is on locally. The TV has one tuner, so one antenna game shows at a time.</p>
 <label class=inline><input type="checkbox" name="antenna_enabled"${if (s.antennaEnabled) " checked" else ""}> Use over-the-air channels</label>
+$channelRows
+<details><summary class=small>Using an HDHomeRun instead?</summary>
 <label>Tuner IP address<input name="antenna_host" value="${esc(s.antennaHost)}" placeholder="leave blank to find it automatically"></label>
 <label>Transcode profile (HDHomeRun EXTEND only)<input name="antenna_transcode" value="${esc(s.antennaTranscode)}" placeholder="blank, mobile, heavy…"></label>
-$channelRows
+</details>
 </div>
 <div class=step><h2>Playlist</h2>
 <label>M3U playlist URL<input name="m3u_url" value="${esc(s.m3uUrl)}" placeholder="https://…/playlist.m3u"></label>
 </div>
 <div class=step><h2>Stream for a specific game</h2>
-<p class=muted style="margin-top:0">HLS/DASH/TS link. To add headers: <code>url|Referer=…&amp;User-Agent=…</code></p>
+<p class=muted style="margin-top:0">Type <code>tv:2.1</code> to put the antenna on that channel for this game (useful when two games share a network). Or paste an HLS/DASH/TS link; headers go after a bar: <code>url|Referer=…</code></p>
 $gameRows
 </div>
 </details>

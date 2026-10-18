@@ -14,17 +14,31 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Antenna channels from the TV's own tuner, via Android's TV Input Framework. Channels and guide
- * data come from the system TV provider (filled in by the TV's channel scan); playback is a TvView.
+ * Antenna channels from the TV's own tuner, via Android's TV Input Framework; playback is a TvView.
+ *
+ * Channels come from the system TV provider (with guide data, so games can be matched by program
+ * title), or on TCL TVs, which hide their channels from it, from TCL's own channel database (no
+ * guide). Without a guide, a game is placed by the user's network -> channel settings; two games on
+ * one network at once can't be told apart, so those need a per-game "tv:2.1" override.
  */
 class TvTunerProvider(private val context: Context) : StreamProvider {
 
-    private class Channel(val id: Long, val inputId: String, val number: String, val name: String, val affiliation: String?)
+    private class Channel(
+        val uri: String,
+        val inputId: String,
+        val number: String,
+        val name: String,
+        val affiliation: String?,
+        /** System TV provider row, for guide lookups; null for TCL channels. */
+        val providerId: Long?,
+        val tuneExtras: Map<String, Int> = emptyMap(),
+    )
+
     private class Program(val start: Long, val end: Long, val text: String)
 
     private val mutex = Mutex()
     private var channels: List<Channel> = emptyList()
-    private var programs: Map<Long, List<Program>> = emptyMap()
+    private var programs: Map<String, List<Program>> = emptyMap()
     private var fetchedAt = 0L
 
     /** Simultaneous channels the tuner can show; most TVs have one. */
@@ -34,30 +48,50 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
     @Volatile var lastError: String? = null
         private set
 
-    val hasChannels get() = channels.isNotEmpty()
+    val hasTuner get() = channels.isNotEmpty()
+
+    /** Scanned channels as (number, name), for picking network channels in setup. */
+    val channelChoices: List<Pair<String, String>> get() = channels.map { it.number to it.name }
 
     override suspend fun find(game: NflGame, allGames: List<NflGame>, settings: AppSettings): StreamSource? {
         if (!settings.antennaEnabled || game.state == GameState.POST) return null
         load()
         if (channels.isEmpty()) return null
 
+        // Per-game override, e.g. "tv:4.1".
+        settings.manualStreams[game.id]?.trim()?.takeIf { it.startsWith(TV_PREFIX, ignoreCase = true) }?.let { spec ->
+            return byNumber(spec.substring(TV_PREFIX.length))?.let(::source)
+        }
+
         val at = OtaMatching.airTime(game).toEpochMilli()
         val channel = channels.firstOrNull { ch ->
-            programs[ch.id].orEmpty().any { it.start <= at && at < it.end && OtaMatching.programMatches(it.text, game) }
+            programs[ch.uri].orEmpty().any { it.start <= at && at < it.end && OtaMatching.programMatches(it.text, game) }
         } ?: OtaMatching.uniqueNetwork(game, allGames)?.let { network ->
-            val pinned = settings.antennaChannels[network]?.let(::normalizeNumber)
-            channels.firstOrNull { pinned != null && normalizeNumber(it.number) == pinned }
+            settings.antennaChannels[network]?.let(::byNumber)
                 ?: channels.firstOrNull { it.affiliation?.contains(network, ignoreCase = true) == true }
                 ?: channels.firstOrNull { it.name.contains(network, ignoreCase = true) }
-        } ?: return null
+        }
 
-        return StreamSource(
-            url = TvContract.buildChannelUri(channel.id).toString(),
-            label = "Antenna ${channel.number} ${channel.name}".trim(),
-            kind = SourceKind.TUNER,
-            inputId = channel.inputId,
-        )
+        lastError = if (programs.isEmpty() && settings.antennaChannels.isEmpty()) {
+            "Pick your local CBS/FOX/NBC/ABC channels in setup (More options → Antenna)."
+        } else {
+            null
+        }
+        return channel?.let(::source)
     }
+
+    private fun byNumber(number: String): Channel? {
+        val wanted = normalizeNumber(number)
+        return channels.firstOrNull { wanted.isNotEmpty() && normalizeNumber(it.number) == wanted }
+    }
+
+    private fun source(ch: Channel) = StreamSource(
+        url = ch.uri,
+        label = "Antenna ${ch.number} ${ch.name}".trim(),
+        kind = SourceKind.TUNER,
+        inputId = ch.inputId,
+        tuneExtras = ch.tuneExtras,
+    )
 
     private suspend fun load() = mutex.withLock {
         if (System.currentTimeMillis() - fetchedAt < CACHE_MS) return@withLock
@@ -67,20 +101,41 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
             tunerCount = tuners.filter { it.tunerCount > 0 }.minOfOrNull { it.tunerCount } ?: 1
             val tunerIds = tuners.map { it.id }.toSet()
 
-            channels = try {
+            var denied = false
+            val published = try {
                 queryChannels().filter { it.inputId in tunerIds }
             } catch (e: SecurityException) {
-                lastError = "Allow Fantasy Multiview to read TV channels."
+                denied = true
                 emptyList()
             }
-            programs = channels.associate { it.id to queryPrograms(it.id) }
+            channels = published.ifEmpty { tclChannels(tuners) }
+            programs = channels.mapNotNull { ch -> ch.providerId?.let { ch.uri to queryPrograms(it) } }.toMap()
+                .filterValues { it.isNotEmpty() }
             lastError = when {
+                channels.isNotEmpty() -> null
                 tuners.isEmpty() -> "This TV has no built-in tuner."
-                channels.isEmpty() -> lastError ?: "No antenna channels yet. Run a channel scan in the TV's Live TV app."
-                else -> null
+                denied -> "Allow Fantasy Multiview to read TV channels."
+                else -> "No antenna channels yet. Run a channel scan in the TV's Live TV app."
             }
-            Log.i(TAG, "tuners=${tuners.map { it.id }} channels=${channels.size} withGuide=${programs.count { it.value.isNotEmpty() }}")
+            Log.i(TAG, "tuners=${tuners.map { it.id }} channels=${channels.size} withGuide=${programs.size}")
             fetchedAt = System.currentTimeMillis()
+        }
+    }
+
+    private fun tclChannels(tuners: List<TvInputInfo>): List<Channel> {
+        // Hardware tuner inputs have ids ending in "/HW<n>"; app-provided inputs (Pluto etc.) don't.
+        val input = tuners.firstOrNull { it.serviceInfo.packageName == TclChannels.TUNER_PACKAGE && "/HW" in it.id }
+            ?: return emptyList()
+        return TclChannels.load(context).orEmpty().map { entry ->
+            Channel(
+                uri = TvContract.buildChannelUri(entry.key.toLong()).toString(),
+                inputId = input.id,
+                number = entry.number,
+                name = entry.name,
+                affiliation = null,
+                providerId = null,
+                tuneExtras = mapOf(TclChannels.KEY_PARAM to entry.key),
+            )
         }
     }
 
@@ -99,7 +154,15 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
                 // Only channels from a real scan (antenna or cable), not app-provided "channels".
                 val type = c.getString(5)
                 if (type == TvContract.Channels.TYPE_OTHER || type == TvContract.Channels.TYPE_PREVIEW) continue
-                result += Channel(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty(), c.getString(3).orEmpty(), c.getString(4))
+                val id = c.getLong(0)
+                result += Channel(
+                    uri = TvContract.buildChannelUri(id).toString(),
+                    inputId = c.getString(1).orEmpty(),
+                    number = c.getString(2).orEmpty(),
+                    name = c.getString(3).orEmpty(),
+                    affiliation = c.getString(4),
+                    providerId = id,
+                )
             }
         }
         return result
@@ -128,10 +191,12 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
     /** "2-1", "2.1" and "2 1" all mean channel 2.1. */
     private fun normalizeNumber(number: String) = number.trim().replace(Regex("""[\s\-]+"""), ".")
 
-    private companion object {
-        const val TAG = "TvTunerProvider"
-        const val CACHE_MS = 5 * 60_000L
-        const val GUIDE_BACK_MS = 4 * 3_600_000L
-        const val GUIDE_AHEAD_MS = 8 * 3_600_000L
+    companion object {
+        /** Per-game stream override that puts the TV tuner on a channel: "tv:4.1". */
+        const val TV_PREFIX = "tv:"
+        private const val TAG = "TvTunerProvider"
+        private const val CACHE_MS = 5 * 60_000L
+        private const val GUIDE_BACK_MS = 4 * 3_600_000L
+        private const val GUIDE_AHEAD_MS = 8 * 3_600_000L
     }
 }

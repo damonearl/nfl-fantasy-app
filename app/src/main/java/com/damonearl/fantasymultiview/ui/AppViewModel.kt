@@ -69,7 +69,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val scoreboard = NflScoreboardClient(http, json)
     private val tuner = TvTunerProvider(app)
     // HDHomeRun is only searched for when the TV's own tuner has nothing, or an address is set.
-    private val antenna = HdHomeRunProvider(http, json, shouldRun = { it.antennaHost.isNotBlank() || !tuner.hasChannels })
+    private val antenna = HdHomeRunProvider(http, json, shouldRun = { it.antennaHost.isNotBlank() || !tuner.hasTuner })
     private val streams = StreamResolver(listOf(ManualStreamProvider(), tuner, antenna, M3uStreamProvider(http)))
     val players = PlayerPool(app, http)
 
@@ -81,6 +81,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         teams = { _state.value.league?.teams.orEmpty() },
         games = { _state.value.games },
         status = { setupStatus(_state.value) },
+        antennaChoices = { tuner.channelChoices },
     )
 
     init {
@@ -134,7 +135,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     league = league, games = games, tiles = tiles, otherGames = others,
                     loading = false, error = null,
                     antennaError = when {
-                        !settings.antennaEnabled || tuner.hasChannels -> null
+                        !settings.antennaEnabled -> null
+                        tuner.hasTuner -> tuner.lastError
                         antenna.tunerCount != null -> antenna.lastError
                         else -> tuner.lastError ?: antenna.lastError
                     },

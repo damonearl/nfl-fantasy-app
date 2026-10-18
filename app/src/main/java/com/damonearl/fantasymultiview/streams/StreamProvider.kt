@@ -22,6 +22,8 @@ data class StreamSource(
     val kind: SourceKind,
     /** TV input that owns the channel, for [SourceKind.TUNER] sources. */
     val inputId: String? = null,
+    /** Extra tune parameters some vendor tuners read, e.g. TCL's "dbprimarykey". */
+    val tuneExtras: Map<String, Int> = emptyMap(),
 ) {
     companion object {
         /** Parses "url" or Kodi-style "url|Referer=...&User-Agent=..." specs. */
