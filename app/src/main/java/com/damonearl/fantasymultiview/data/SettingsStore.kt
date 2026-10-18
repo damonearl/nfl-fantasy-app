@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.serialization.json.Json
+import java.security.SecureRandom
 import java.time.LocalDate
 
 data class AppSettings(
@@ -41,6 +42,14 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _settings = MutableStateFlow(load())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+
+    /** Path token for the setup page. Generated once and kept, so the setup address can be bookmarked. */
+    val setupToken: String = prefs.getString(KEY_SETUP_TOKEN, null)
+        ?: buildString {
+            val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+            val random = SecureRandom()
+            repeat(6) { append(alphabet[random.nextInt(alphabet.length)]) }
+        }.also { prefs.edit().putString(KEY_SETUP_TOKEN, it).apply() }
 
     fun update(transform: (AppSettings) -> AppSettings) {
         save(_settings.updateAndGet(transform))
@@ -91,6 +100,7 @@ class SettingsStore(context: Context) {
         const val KEY_M3U = "m3u_url"
         const val KEY_MAX_TILES = "max_tiles"
         const val KEY_MANUAL = "manual_streams"
+        const val KEY_SETUP_TOKEN = "setup_token"
         const val KEY_ANTENNA = "antenna_enabled"
         const val KEY_ANTENNA_HOST = "antenna_host"
         const val KEY_ANTENNA_TRANSCODE = "antenna_transcode"

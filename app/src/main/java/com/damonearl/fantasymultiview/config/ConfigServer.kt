@@ -12,7 +12,6 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
-import java.security.SecureRandom
 import kotlin.concurrent.thread
 
 /** Connection state shown at the top of the setup page. */
@@ -35,11 +34,7 @@ class ConfigServer(
     private val games: () -> List<NflGame>,
     private val status: () -> SetupStatus,
 ) {
-    val token: String = buildString {
-        val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
-        val random = SecureRandom()
-        repeat(6) { append(alphabet[random.nextInt(alphabet.length)]) }
-    }
+    private val token = store.setupToken
 
     @Volatile private var server: ServerSocket? = null
 
