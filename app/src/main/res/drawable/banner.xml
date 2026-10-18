@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV launcher banner: four-up grid with score rails on each side. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#0A0E13" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#3BA3FF" android:pathData="M16,28h52v124h-52z" />
+    <path android:fillColor="#FF6B5E" android:pathData="M252,28h52v124h-52z" />
+    <path android:fillColor="#1E2A38" android:pathData="M78,28h80v58h-80z" />
+    <path android:fillColor="#1E2A38" android:pathData="M164,28h80v58h-80z" />
+    <path android:fillColor="#1E2A38" android:pathData="M78,94h80v58h-80z" />
+    <path android:fillColor="#1E2A38" android:pathData="M164,94h80v58h-80z" />
+    <path android:fillColor="#E8EEF5" android:pathData="M112,48l16,9l-16,9z" />
+    <path android:fillColor="#E8EEF5" android:pathData="M198,48l16,9l-16,9z" />
+    <path android:fillColor="#E8EEF5" android:pathData="M112,114l16,9l-16,9z" />
+    <path android:fillColor="#E8EEF5" android:pathData="M198,114l16,9l-16,9z" />
+    <path android:fillColor="#0A0E13" android:pathData="M24,40h36v6h-36zM24,56h28v6h-28zM24,72h36v6h-36zM24,88h24v6h-24z" />
+    <path android:fillColor="#0A0E13" android:pathData="M260,40h36v6h-36zM260,56h28v6h-28zM260,72h36v6h-36zM260,88h24v6h-24z" />
+</vector>
