@@ -50,25 +50,28 @@ fun TeamPanel(
         modifier
             .fillMaxHeight()
             .background(Palette.Panel)
-            .padding(horizontal = 8.dp, vertical = 10.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
         Box(Modifier.fillMaxWidth().height(2.dp).background(accent, RoundedCornerShape(1.dp)))
-        Spacer(Modifier.height(6.dp))
-        Text(label, color = accent, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-        Text(
-            side?.name ?: "—",
-            color = Palette.Text,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            side?.total?.pts() ?: "0.0",
-            color = if (leading) accent else Palette.Text,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-        )
+        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(label, color = accent, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                Text(
+                    side?.name ?: "—",
+                    color = Palette.Text,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                side?.total?.pts() ?: "0.0",
+                color = if (leading) accent else Palette.Text,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
         val starters = side?.starters.orEmpty()
         val playing = starters.count { gameFor(it.proTeam)?.state == GameState.IN }
         val yetToPlay = starters.count { gameFor(it.proTeam)?.state == GameState.PRE }
@@ -78,10 +81,10 @@ fun TeamPanel(
             fontSize = 7.sp,
             maxLines = 1,
         )
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(3.dp))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Line))
 
-        Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Column(modifier = Modifier.padding(top = 2.dp)) {
             starters.forEach { player -> PlayerRow(player, gameFor(player.proTeam), accent) }
         }
     }
@@ -111,7 +114,7 @@ private fun PlayerRow(player: FantasyPlayer, game: NflGame?, accent: Color) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(3.dp))
             .background(Palette.Gain.copy(alpha = 0.22f * flash.value))
-            .padding(horizontal = 3.dp, vertical = 2.dp)
+            .padding(horizontal = 3.dp, vertical = 1.dp)
             .alpha(if (done && !live) 0.6f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {

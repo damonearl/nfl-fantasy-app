@@ -76,7 +76,7 @@ import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
 
-private val PANEL_WIDTH = 140.dp
+private val PANEL_WIDTH = 170.dp
 
 @Composable
 fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit) {
@@ -87,29 +87,35 @@ fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit)
     val mine = matchup?.mine
     val opp = matchup?.opponent
 
+    // Video starts at the top-left corner with everything else to the right and below: TCL's
+    // tuner hides app drawing from the screen's top-left to the antenna video's bottom-right, so
+    // with the antenna tile in the corner that area is just the video itself.
     Row(Modifier.fillMaxSize().background(Palette.Bg)) {
-        TeamPanel(
-            label = "YOU",
-            side = mine,
-            accent = Palette.Mine,
-            gameFor = gamesByTeam::get,
-            leading = mine != null && opp != null && mine.total > opp.total,
-            modifier = Modifier.width(PANEL_WIDTH),
-        )
         CenterColumn(
             state = state,
             players = players,
             onOpenSettings = onOpenSettings,
             modifier = Modifier.weight(1f),
         )
-        TeamPanel(
-            label = "OPPONENT",
-            side = opp,
-            accent = Palette.Opp,
-            gameFor = gamesByTeam::get,
-            leading = mine != null && opp != null && opp.total > mine.total,
-            modifier = Modifier.width(PANEL_WIDTH),
-        )
+        Column(Modifier.width(PANEL_WIDTH).fillMaxHeight().background(Palette.Panel)) {
+            TeamPanel(
+                label = "YOU",
+                side = mine,
+                accent = Palette.Mine,
+                gameFor = gamesByTeam::get,
+                leading = mine != null && opp != null && mine.total > opp.total,
+                modifier = Modifier.weight(1f),
+            )
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Line))
+            TeamPanel(
+                label = "OPPONENT",
+                side = opp,
+                accent = Palette.Opp,
+                gameFor = gamesByTeam::get,
+                leading = mine != null && opp != null && opp.total > mine.total,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
@@ -142,20 +148,19 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
         }.orEmpty()
     }
 
-    Column(modifier.fillMaxHeight().padding(horizontal = 10.dp, vertical = 10.dp)) {
-        TopBar(state, onOpenSettings)
-        Spacer(Modifier.height(8.dp))
+    Column(modifier.fillMaxHeight()) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val visible = if (expandedId != null) tiles.filter { it.game.id == expandedId } else tiles
+            // The antenna tile always takes the top-left slot (see WatchScreen).
+            val visible = (if (expandedId != null) tiles.filter { it.game.id == expandedId } else tiles)
+                .sortedByDescending { it.stream?.kind == SourceKind.TUNER }
             if (visible.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyGrid(state) }
             } else {
                 val gap = 6.dp
                 val (cols, tileWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap)
-                val rows = (visible.size + cols - 1) / cols
                 val tileHeight = tileWidth * 9f / 16f
-                val left = (maxWidth - tileWidth * cols - gap * (cols - 1)) / 2
-                val top = (maxHeight - tileHeight * rows - gap * (rows - 1)) / 2
+                val left = 0.dp
+                val top = 0.dp
                 // Every tile sits directly in this Box, placed by offset, so zooming one only resizes it:
                 // its player (and the TV tuner session) carries over instead of being rebuilt.
                 visible.forEachIndexed { index, tile ->
@@ -190,9 +195,9 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
                 }
             }
         }
-        if (state.otherGames.isNotEmpty() && expandedId == null) {
-            Spacer(Modifier.height(8.dp))
-            OtherGames(state.otherGames, starters)
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (state.otherGames.isNotEmpty() && expandedId == null) OtherGames(state.otherGames, starters)
+            TopBar(state, onOpenSettings)
         }
     }
 }
@@ -359,7 +364,7 @@ private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifie
     // TCL's tuner only fits video to views smaller than 1280x720 px; at that size or larger it
     // switches to full screen and covers the whole layout. So the tuner view stays just under it.
     val maxVideo = with(LocalDensity.current) { DpSize(1276.toDp(), 717.toDp()) }
-    Box(modifier, contentAlignment = Alignment.Center) {
+    Box(modifier, contentAlignment = Alignment.TopStart) {
         AndroidView(
             factory = { ctx ->
                 TvView(ctx).apply {
