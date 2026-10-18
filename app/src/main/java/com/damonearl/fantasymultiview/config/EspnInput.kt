@@ -33,6 +33,7 @@ object EspnInput {
         return Cookies(s2, swid)
     }
 
-    private val SWID = Regex("""\{?([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})}?""")
+    // Braces stay escaped: Android's ICU regex engine rejects a bare "}" that desktop Java accepts.
+    private val SWID = Regex("""\{?([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\}?""")
     private val LONG_TOKEN = Regex("""[A-Za-z0-9%+/=_.\-]{80,}""")
 }

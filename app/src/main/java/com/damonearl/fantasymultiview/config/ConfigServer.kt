@@ -104,7 +104,8 @@ class ConfigServer(
                 }
                 else -> respond("400 Bad Request", "Bad request")
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // A bad request must never take down the TV app; this runs on a bare background thread.
             Log.w("ConfigServer", "request failed", e)
         }
     }
