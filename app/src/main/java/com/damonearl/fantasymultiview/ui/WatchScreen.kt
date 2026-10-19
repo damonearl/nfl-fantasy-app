@@ -4,6 +4,7 @@ import android.media.tv.TvInputManager
 import android.media.tv.TvView
 import android.net.Uri
 import android.os.Bundle
+import android.view.SurfaceView
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -49,7 +50,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -154,13 +154,7 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyGrid(state) }
             } else {
                 val gap = 6.dp
-                val (cols, gridWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap)
-                // TCL's tuner only fits video to views smaller than 1280x720 px; at that size or larger
-                // it switches to full screen over the whole layout. So with an antenna tile on screen,
-                // tiles stop growing just short of that. The video sits inside the tile's border, which is
-                // 1dp a side when unfocused (the larger video), so that case is the one kept under.
-                val tunerCap = with(LocalDensity.current) { 1276.toDp() } + 2.dp
-                val tileWidth = if (visible.any { it.stream?.kind == SourceKind.TUNER }) min(gridWidth, tunerCap) else gridWidth
+                val (cols, tileWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap)
                 val tileHeight = tileWidth * 9f / 16f
                 val left = 0.dp
                 val top = 0.dp
@@ -360,6 +354,9 @@ private fun GameTileView(
     }
 }
 
+private const val TUNER_SURFACE_WIDTH = 1276
+private const val TUNER_SURFACE_HEIGHT = 716
+
 /** Shows a channel from the TV's built-in tuner. */
 @Composable
 private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifier) {
@@ -394,6 +391,11 @@ private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifie
                 }
             },
             update = { view ->
+                // TCL's tuner goes full screen (over the whole layout) when the video surface is
+                // 1280x720 px or larger, but places the video by the view's on-screen frame. A small
+                // fixed buffer keeps it in picture-in-picture while the view fills the tile.
+                (0 until view.childCount).map(view::getChildAt).filterIsInstance<SurfaceView>()
+                    .forEach { it.holder.setFixedSize(TUNER_SURFACE_WIDTH, TUNER_SURFACE_HEIGHT) }
                 if (view.tag != source) {
                     view.tag = source
                     val extras = Bundle().apply { source.tuneExtras.forEach { (k, v) -> putInt(k, v) } }
