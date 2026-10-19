@@ -7,7 +7,11 @@ the right.
 - **Grid**: live games ranked by how many starters (yours + theirs) are in them, then the next
   kickoffs. Tiles keep their position as games end and new ones start.
 - **Remote**: D-pad moves between tiles; audio follows focus. **OK** expands a tile, **Back**
-  returns to the grid. **Up** reaches Settings.
+  returns to the grid. **Down** reaches Settings.
+- **Settings on the TV**: up/down moves between rows, left/right changes a value, OK opens a list
+  or the keyboard. Covers league, team, screen count, antenna channels per network, and a
+  per-game source picker (e.g. put the antenna on one of two games sharing a network). ESPN
+  cookies are pasted from the phone page (QR code on the settings screen).
 - **Score rails**: total, projection, playing / yet-to-play counts, per-player game clock, and a
   green flash with the delta whenever a player scores.
 

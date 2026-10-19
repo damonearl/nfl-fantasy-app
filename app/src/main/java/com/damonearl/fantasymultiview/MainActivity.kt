@@ -14,7 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.damonearl.fantasymultiview.ui.AppTheme
 import com.damonearl.fantasymultiview.ui.AppViewModel
-import com.damonearl.fantasymultiview.ui.SetupScreen
+import com.damonearl.fantasymultiview.ui.SettingsScreen
 import com.damonearl.fantasymultiview.ui.WatchScreen
 
 class MainActivity : ComponentActivity() {
@@ -39,10 +39,11 @@ class MainActivity : ComponentActivity() {
                     WatchScreen(state, viewModel.players, onOpenSettings = { showSettings = true })
                 } else {
                     BackHandler(enabled = ready) { showSettings = false }
-                    SetupScreen(
+                    SettingsScreen(
                         state = state,
                         configUrl = viewModel.configServer.url,
-                        onSelectTeam = viewModel::selectTeam,
+                        antennaChannels = viewModel.antennaChannels,
+                        onUpdate = viewModel::updateSettings,
                         onDone = if (ready) ({ showSettings = false }) else null,
                     )
                 }

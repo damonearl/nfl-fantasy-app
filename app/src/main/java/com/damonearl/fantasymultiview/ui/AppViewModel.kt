@@ -116,7 +116,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun selectTeam(teamId: Int) = settingsStore.update { it.copy(teamId = teamId) }
+    fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
+
+    /** The TV tuner's scanned channels as (number, name); empty until the antenna is on and loaded. */
+    val antennaChannels: List<Pair<String, String>> get() = tuner.channelChoices
 
     private suspend fun refresh(settings: AppSettings) {
         _state.update { it.copy(loading = true) }
