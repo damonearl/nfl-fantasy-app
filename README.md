@@ -1,8 +1,8 @@
 # Fantasy Multiview
 
 A Google TV / Android TV app that watches your ESPN Fantasy Football matchup: up to four games
-your starters are in, with live fantasy points for your lineup on the left and your opponent's on
-the right.
+your starters are in, with live fantasy points down the right side: your lineup on top, your
+opponent's below.
 
 - **Grid**: live games ranked by how many starters (yours + theirs) are in them, then the next
   kickoffs. Tiles keep their position as games end and new ones start.
