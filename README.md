@@ -57,3 +57,7 @@ ui/        Compose screens: watch (rails + grid), setup (QR), theme
 
 ESPN's fantasy API is unofficial and undocumented, so field names can change between seasons.
 `EspnFantasyClient` is the one place to fix if they do.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
