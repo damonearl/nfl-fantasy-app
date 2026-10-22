@@ -6,6 +6,9 @@ import com.damonearl.fantasymultiview.data.NflGame
 import com.damonearl.fantasymultiview.data.NflTeam
 import kotlinx.coroutines.CancellationException
 
+/** Sent to IPTV hosts, many of which refuse OkHttp's default user agent. */
+const val PLAYER_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
+
 enum class SourceKind {
     MANUAL,
     /** HDHomeRun network tuner (an HTTP stream). */
@@ -24,6 +27,8 @@ data class StreamSource(
     val inputId: String? = null,
     /** Extra tune parameters some vendor tuners read, e.g. TCL's "dbprimarykey". */
     val tuneExtras: Map<String, Int> = emptyMap(),
+    /** May be showing a different game, e.g. a local affiliate while its network has several games on. */
+    val unsure: Boolean = false,
 ) {
     companion object {
         /** Parses "url" or Kodi-style "url|Referer=...&User-Agent=..." specs. */
@@ -45,23 +50,27 @@ data class StreamSource(
 }
 
 interface StreamProvider {
-    /** Returns a stream for [game], or null if this provider has nothing for it. */
+    /** Returns the best stream for [game], or null if this provider has nothing for it. */
     suspend fun find(game: NflGame, allGames: List<NflGame>, settings: AppSettings): StreamSource?
+
+    /** Every stream this provider has that plausibly carries [game], best first. */
+    suspend fun options(game: NflGame, allGames: List<NflGame>, settings: AppSettings): List<StreamSource> =
+        listOfNotNull(find(game, allGames, settings))
 }
 
-/** Asks providers in priority order and returns every match, best first. */
+/** Asks providers in priority order and returns every match, best first; unsure ones go last. */
 class StreamResolver(private val providers: List<StreamProvider>) {
     suspend fun candidates(game: NflGame, allGames: List<NflGame>, settings: AppSettings): List<StreamSource> =
-        providers.mapNotNull { provider ->
+        providers.flatMap { provider ->
             try {
-                provider.find(game, allGames, settings)
+                provider.options(game, allGames, settings)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w("StreamResolver", "${provider::class.simpleName} failed for ${game.matchupLabel}", e)
-                null
+                emptyList()
             }
-        }
+        }.distinctBy { it.url }.sortedBy { it.unsure }
 }
 
 /** Scores how well a channel/program title names a game: 2 = both teams, 1 = one team, 0 = neither. */

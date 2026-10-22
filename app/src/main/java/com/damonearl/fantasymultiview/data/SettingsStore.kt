@@ -16,7 +16,6 @@ data class AppSettings(
     val espnS2: String = "",
     val swid: String = "",
     val m3uUrl: String = "",
-    val maxTiles: Int = 4,
     /** Use an HDHomeRun network tuner for over-the-air channels. */
     val antennaEnabled: Boolean = false,
     /** HDHomeRun IP/host; blank = auto-discover on the local network. */
@@ -62,7 +61,6 @@ class SettingsStore(context: Context) {
         espnS2 = prefs.getString(KEY_S2, "").orEmpty(),
         swid = prefs.getString(KEY_SWID, "").orEmpty(),
         m3uUrl = prefs.getString(KEY_M3U, "").orEmpty(),
-        maxTiles = prefs.getInt(KEY_MAX_TILES, 4),
         antennaEnabled = prefs.getBoolean(KEY_ANTENNA, false),
         antennaHost = prefs.getString(KEY_ANTENNA_HOST, "").orEmpty(),
         antennaTranscode = prefs.getString(KEY_ANTENNA_TRANSCODE, "").orEmpty(),
@@ -82,7 +80,6 @@ class SettingsStore(context: Context) {
             .putString(KEY_S2, s.espnS2)
             .putString(KEY_SWID, s.swid)
             .putString(KEY_M3U, s.m3uUrl)
-            .putInt(KEY_MAX_TILES, s.maxTiles)
             .putBoolean(KEY_ANTENNA, s.antennaEnabled)
             .putString(KEY_ANTENNA_HOST, s.antennaHost)
             .putString(KEY_ANTENNA_TRANSCODE, s.antennaTranscode)
@@ -98,7 +95,6 @@ class SettingsStore(context: Context) {
         const val KEY_S2 = "espn_s2"
         const val KEY_SWID = "swid"
         const val KEY_M3U = "m3u_url"
-        const val KEY_MAX_TILES = "max_tiles"
         const val KEY_MANUAL = "manual_streams"
         const val KEY_SETUP_TOKEN = "setup_token"
         const val KEY_ANTENNA = "antenna_enabled"

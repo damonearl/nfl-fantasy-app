@@ -67,9 +67,7 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
         val channel = channels.firstOrNull { ch ->
             programs[ch.uri].orEmpty().any { it.start <= at && at < it.end && OtaMatching.programMatches(it.text, game) }
         } ?: OtaMatching.uniqueNetwork(game, allGames)?.let { network ->
-            settings.antennaChannels[network]?.let(::byNumber)
-                ?: channels.firstOrNull { it.affiliation?.contains(network, ignoreCase = true) == true }
-                ?: channels.firstOrNull { it.name.contains(network, ignoreCase = true) }
+            settings.antennaChannels[network]?.let(::byNumber) ?: networkChannel(network)
         }
 
         lastError = if (programs.isEmpty() && settings.antennaChannels.isEmpty()) {
@@ -79,6 +77,25 @@ class TvTunerProvider(private val context: Context) : StreamProvider {
         }
         return channel?.let(::source)
     }
+
+    /**
+     * The matched channel plus, for a network game, the local affiliate even when the network has
+     * several games at once: it carries one of them, and the user can see which.
+     */
+    override suspend fun options(game: NflGame, allGames: List<NflGame>, settings: AppSettings): List<StreamSource> {
+        val best = find(game, allGames, settings)
+        val network = OtaMatching.network(game)
+        if (!settings.antennaEnabled || game.state == GameState.POST || network == null) return listOfNotNull(best)
+        val local = (settings.antennaChannels[network]?.let(::byNumber) ?: networkChannel(network))
+            ?.let(::source)
+            ?.takeIf { it.url != best?.url }
+            ?.let { it.copy(label = "${it.label} · local $network game", unsure = true) }
+        return listOfNotNull(best, local)
+    }
+
+    private fun networkChannel(network: String): Channel? =
+        channels.firstOrNull { it.affiliation?.contains(network, ignoreCase = true) == true }
+            ?: channels.firstOrNull { it.name.contains(network, ignoreCase = true) }
 
     private fun byNumber(number: String): Channel? {
         val wanted = normalizeNumber(number)

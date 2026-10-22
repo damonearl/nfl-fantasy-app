@@ -51,12 +51,20 @@ class FailedRequestLogger : Interceptor {
         private const val TAG = "HttpDebug"
         private const val BODY_LIMIT = 500L
         private val SECRET_HEADERS = setOf("cookie", "set-cookie", "authorization", "proxy-authorization")
+        private val XTREAM_PATHS = setOf("live", "movie", "series", "timeshift")
         private val SECRET_PARAMS = setOf("password", "pass", "pwd", "token", "access_token", "auth", "key", "apikey", "api_key", "deviceauth", "username", "user")
 
-        /** The URL with credential-like query parameters blanked. Credentials embedded in the path aren't detected. */
+        /**
+         * The URL with credential-like query parameters blanked, and the username/password segments
+         * of Xtream stream paths (/live/user/pass/123.ts). Other credentials in paths aren't detected.
+         */
         fun redact(url: HttpUrl): String {
             // Rebuilt in the original order so the logged URL lines up with the real one.
             val builder = url.newBuilder().query(null)
+            val segments = url.pathSegments
+            if (segments.size >= 4 && segments[segments.size - 4].lowercase() in XTREAM_PATHS) {
+                builder.setPathSegment(segments.size - 3, "***").setPathSegment(segments.size - 2, "***")
+            }
             for (i in 0 until url.querySize) {
                 val name = url.queryParameterName(i)
                 builder.addQueryParameter(name, if (name.lowercase() in SECRET_PARAMS) "***" else url.queryParameterValue(i))

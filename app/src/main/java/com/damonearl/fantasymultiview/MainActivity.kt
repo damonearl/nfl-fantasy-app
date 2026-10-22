@@ -36,7 +36,14 @@ class MainActivity : ComponentActivity() {
                 val ready = state.matchup != null
 
                 if (ready && !showSettings) {
-                    WatchScreen(state, viewModel.players, onOpenSettings = { showSettings = true })
+                    WatchScreen(
+                        state = state,
+                        players = viewModel.players,
+                        onChoose = viewModel::chooseStream,
+                        onWatch = viewModel::watch,
+                        onDismissChoice = viewModel::dismissChoice,
+                        onOpenSettings = { showSettings = true },
+                    )
                 } else {
                     BackHandler(enabled = ready) { showSettings = false }
                     SettingsScreen(

@@ -14,5 +14,9 @@ class FailedRequestLoggerTest {
             "https://api.example.test/guide?DeviceAuth=***&x=1",
             FailedRequestLogger.redact("https://api.example.test/guide?DeviceAuth=abc&x=1".toHttpUrl()),
         )
+        assertEquals(
+            "http://example.test:8080/live/***/***/123.ts",
+            FailedRequestLogger.redact("http://example.test:8080/live/me/s3cret/123.ts".toHttpUrl()),
+        )
     }
 }

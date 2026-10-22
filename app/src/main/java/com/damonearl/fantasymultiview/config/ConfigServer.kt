@@ -138,7 +138,6 @@ class ConfigServer(
                 espnS2 = if (clearCookies) "" else cookies.espnS2 ?: s.espnS2,
                 swid = if (clearCookies) "" else cookies.swid ?: s.swid,
                 m3uUrl = form["m3u_url"]?.trim() ?: s.m3uUrl,
-                maxTiles = form["max_tiles"]?.toIntOrNull()?.coerceIn(1, 4) ?: s.maxTiles,
                 antennaEnabled = form["antenna_enabled"] == "on",
                 antennaHost = form["antenna_host"]?.trim() ?: s.antennaHost,
                 antennaTranscode = form["antenna_transcode"]?.trim() ?: s.antennaTranscode,
@@ -180,9 +179,6 @@ class ConfigServer(
             """<select name="team_id"><option value=""$autoSel>Detect automatically (needs cookies)</option>$options</select>"""
         }
 
-        val tileOptions = (1..4).joinToString("") { n ->
-            """<option${if (n == s.maxTiles) " selected" else ""}>$n</option>"""
-        }
         val choices = antennaChoices()
         val channelRows = OTA_NETWORKS.joinToString("") { n ->
             val current = s.antennaChannels[n].orEmpty()
@@ -261,9 +257,8 @@ $cookieNote
 $teamStep
 </div>
 
-<details><summary>More options: screens, antenna, other video</summary>
-<div class=step><h2>Screens</h2>
-<label>Games shown at once<select name="max_tiles">$tileOptions</select></label>
+<details><summary>More options: season, antenna, other video</summary>
+<div class=step><h2>Season</h2>
 <label>Season<input name="season" inputmode="numeric" value="${s.season}"></label>
 </div>
 <div class=step><h2>Antenna</h2>
@@ -277,6 +272,7 @@ $channelRows
 </div>
 <div class=step><h2>Playlist</h2>
 <label>M3U playlist URL<input name="m3u_url" value="${esc(s.m3uUrl)}" placeholder="https://…/playlist.m3u"></label>
+<p class=muted>Xtream links (<code>…/get.php?username=…&amp;password=…</code>) work too, even when the provider blocks the M3U download.</p>
 </div>
 <div class=step><h2>Stream for a specific game</h2>
 <p class=muted style="margin-top:0">Type <code>tv:2.1</code> to put the antenna on that channel for this game (useful when two games share a network). Or paste an HLS/DASH/TS link; headers go after a bar: <code>url|Referer=…</code></p>

@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.SurfaceView
 import android.view.ViewGroup
-import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,28 +14,34 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,11 +58,11 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -74,9 +79,17 @@ import java.time.Duration
 import java.time.Instant
 
 private val PANEL_WIDTH = 170.dp
+private const val VIDEO_KEY = "video"
 
 @Composable
-fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit) {
+fun WatchScreen(
+    state: UiState,
+    players: PlayerPool,
+    onChoose: (NflGame) -> Unit,
+    onWatch: (NflGame, StreamSource) -> Unit,
+    onDismissChoice: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val matchup = state.matchup
     val gamesByTeam = remember(state.games) {
         state.games.flatMap { g -> listOf(g.home.abbrev to g, g.away.abbrev to g) }.toMap()
@@ -91,6 +104,7 @@ fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit)
         CenterColumn(
             state = state,
             players = players,
+            onChoose = onChoose,
             onOpenSettings = onOpenSettings,
             modifier = Modifier.weight(1f),
         )
@@ -114,30 +128,41 @@ fun WatchScreen(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit)
             )
         }
     }
+
+    state.choice?.let { choice ->
+        StreamChoiceDialog(
+            choice = choice,
+            current = state.watching?.stream?.takeIf { state.watching.game.id == choice.game.id },
+            onPick = { onWatch(choice.game, it) },
+            onDismiss = onDismissChoice,
+        )
+    }
 }
 
 @Composable
-private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: () -> Unit, modifier: Modifier) {
-    var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
-    var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
-    val tiles = state.tiles
+private fun CenterColumn(
+    state: UiState,
+    players: PlayerPool,
+    onChoose: (NflGame) -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier,
+) {
+    val watching = state.watching
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
-    fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
+    fun requester(key: String) = requesters.getOrPut(key) { FocusRequester() }
+    // The card (or the video) that had focus, to return to when the stream list closes.
+    var lastFocused by rememberSaveable { mutableStateOf<String?>(null) }
+    val strip = rememberLazyListState()
 
-    // Drop the expanded view if that game left the grid.
-    if (expandedId != null && tiles.none { it.game.id == expandedId }) expandedId = null
-
-    LaunchedEffect(focusedId) { players.setAudioFocus(focusedId) }
-    LaunchedEffect(expandedId) {
-        players.setExpanded(expandedId)
-        (expandedId ?: focusedId)?.let { id -> runCatching { requester(id).requestFocus() } }
+    LaunchedEffect(state.choice == null, state.weekGames.isNotEmpty()) {
+        if (state.choice != null) return@LaunchedEffect
+        val target = lastFocused?.takeIf { it == VIDEO_KEY || state.weekGames.any { g -> g.id == it } }
+            ?: watching?.game?.id
+            ?: return@LaunchedEffect
+        state.weekGames.indexOfFirst { it.id == target }.takeIf { it >= 0 }?.let { strip.scrollToItem(it) }
+        withFrameNanos { }
+        runCatching { requester(target).requestFocus() }
     }
-    LaunchedEffect(tiles.map { it.game.id }) {
-        if (tiles.none { it.game.id == focusedId }) {
-            tiles.firstOrNull()?.let { runCatching { requester(it.game.id).requestFocus() } }
-        }
-    }
-    BackHandler(enabled = expandedId != null) { expandedId = null }
 
     val starters = remember(state.matchup) {
         state.matchup?.let { m ->
@@ -147,66 +172,71 @@ private fun CenterColumn(state: UiState, players: PlayerPool, onOpenSettings: ()
 
     Column(modifier.fillMaxHeight()) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            // The antenna tile always takes the top-left slot (see WatchScreen).
-            val visible = (if (expandedId != null) tiles.filter { it.game.id == expandedId } else tiles)
-                .sortedByDescending { it.stream?.kind == SourceKind.TUNER }
-            if (visible.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyGrid(state) }
+            val width = min(maxWidth, maxHeight * 16f / 9f)
+            if (watching == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyTile(state) }
             } else {
-                val gap = 6.dp
-                val (cols, tileWidth) = bestGrid(visible.size, maxWidth, maxHeight, gap)
-                val tileHeight = tileWidth * 9f / 16f
-                val left = 0.dp
-                val top = 0.dp
-                // Every tile sits directly in this Box, placed by offset, so zooming one only resizes it:
-                // its player (and the TV tuner session) carries over instead of being rebuilt.
-                visible.forEachIndexed { index, tile ->
-                    val id = tile.game.id
-                    key(id) {
-                        GameTileView(
-                            game = tile.game,
-                            sourceLabel = tile.stream?.label,
-                            tuner = tile.stream?.takeIf { it.kind == SourceKind.TUNER },
-                            player = if (tile.stream != null) players.player(id) else null,
-                            status = players.status[id],
-                            involved = starters.filter { (p, _) -> tile.game.involves(p.proTeam) },
-                            focused = focusedId == id,
-                            hasAudio = focusedId == id && tile.stream != null,
-                            modifier = Modifier
-                                .offset(left + (tileWidth + gap) * (index % cols), top + (tileHeight + gap) * (index / cols))
-                                .size(tileWidth, tileHeight)
-                                .focusRequester(requester(id))
-                                .onFocusChanged { if (it.isFocused) focusedId = id }
-                                .onKeyEvent { e ->
-                                    val select = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
-                                    if (select && e.type == KeyEventType.KeyUp) {
-                                        expandedId = if (expandedId == id) null else id
-                                        true
-                                    } else {
-                                        select
-                                    }
-                                }
-                                .focusable(),
-                        )
-                    }
+                var focused by remember { mutableStateOf(false) }
+                val id = watching.game.id
+                GameTileView(
+                    game = watching.game,
+                    stream = watching.stream,
+                    player = if (watching.stream != null) players.player(id) else null,
+                    status = players.status[id],
+                    involved = starters.filter { (p, _) -> watching.game.involves(p.proTeam) },
+                    focused = focused,
+                    modifier = Modifier
+                        .size(width, width * 9f / 16f)
+                        .focusRequester(requester(VIDEO_KEY))
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused) lastFocused = VIDEO_KEY
+                        }
+                        .onSelect { onChoose(watching.game) }
+                        .focusable(),
+                )
+            }
+        }
+        if (state.weekGames.isNotEmpty()) {
+            LazyRow(
+                state = strip,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                items(state.weekGames, key = { it.id }) { g ->
+                    GameChip(
+                        game = g,
+                        watching = g.id == watching?.game?.id,
+                        source = state.available[g.id],
+                        mine = starters.count { (p, m) -> m && g.involves(p.proTeam) },
+                        theirs = starters.count { (p, m) -> !m && g.involves(p.proTeam) },
+                        onClick = { onChoose(g) },
+                        modifier = Modifier
+                            .focusRequester(requester(g.id))
+                            .onFocusChanged { if (it.isFocused) lastFocused = g.id },
+                    )
                 }
             }
         }
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (state.otherGames.isNotEmpty() && expandedId == null) OtherGames(state.otherGames, starters)
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             TopBar(state, onOpenSettings)
         }
     }
 }
 
-/** Chooses the column count that gives the largest 16:9 tiles for [count] tiles in the given space. */
-private fun bestGrid(count: Int, width: Dp, height: Dp, gap: Dp): Pair<Int, Dp> =
-    (1..count).map { cols ->
-        val rows = (count + cols - 1) / cols
-        val byWidth = (width - gap * (cols - 1)) / cols
-        val byHeight = ((height - gap * (rows - 1)) / rows) * 16f / 9f
-        cols to min(byWidth, byHeight)
-    }.maxBy { it.second.value }
+/** Runs [action] when OK is released on the focused element. */
+private fun Modifier.onSelect(action: () -> Unit) = onKeyEvent { e ->
+    val select = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
+    if (select && e.type == KeyEventType.KeyUp) action()
+    select
+}
+
+private fun sourceName(kind: SourceKind) = when (kind) {
+    SourceKind.MANUAL -> "Link"
+    SourceKind.ANTENNA, SourceKind.TUNER -> "Antenna"
+    SourceKind.PLAYLIST -> "IPTV"
+}
 
 @Composable
 private fun TopBar(state: UiState, onOpenSettings: () -> Unit) {
@@ -231,13 +261,14 @@ private fun TopBar(state: UiState, onOpenSettings: () -> Unit) {
         val status = when {
             state.error != null -> state.error
             state.antennaError != null -> "Antenna: ${state.antennaError}"
+            state.playlistError != null -> "IPTV: ${state.playlistError}"
             state.lastUpdated != null -> "Updated ${Duration.between(state.lastUpdated, now).seconds.coerceAtLeast(0)}s ago"
             state.loading -> "Loading…"
             else -> ""
         }
         Text(
             status,
-            color = if (state.error != null || state.antennaError != null) Palette.Warn else Palette.Faint,
+            color = if (state.error != null || state.antennaError != null || state.playlistError != null) Palette.Warn else Palette.Faint,
             fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -256,11 +287,7 @@ fun FocusButton(text: String, modifier: Modifier = Modifier, accent: Color = Pal
             .clip(RoundedCornerShape(6.dp))
             .background(if (focused) accent else Palette.PanelRaised)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { e ->
-                val select = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
-                if (select && e.type == KeyEventType.KeyUp) onClick()
-                select
-            }
+            .onSelect(onClick)
             .focusable()
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
@@ -277,13 +304,11 @@ fun FocusButton(text: String, modifier: Modifier = Modifier, accent: Color = Pal
 @Composable
 private fun GameTileView(
     game: NflGame,
-    sourceLabel: String?,
-    tuner: StreamSource?,
+    stream: StreamSource?,
     player: ExoPlayer?,
     status: TileStatus?,
     involved: List<Pair<FantasyPlayer, Boolean>>,
     focused: Boolean,
-    hasAudio: Boolean,
     modifier: Modifier,
 ) {
     Box(
@@ -291,8 +316,9 @@ private fun GameTileView(
             .background(Color.Black)
             .border(if (focused) 3.dp else 1.dp, if (focused) Palette.Focus else Palette.Line),
     ) {
+        val tuner = stream?.takeIf { it.kind == SourceKind.TUNER }
         if (tuner != null) {
-            TunerView(tuner, hasAudio, Modifier.fillMaxSize().padding(if (focused) 3.dp else 1.dp))
+            TunerView(tuner, Modifier.fillMaxSize().padding(if (focused) 3.dp else 1.dp))
         } else if (player != null) {
             AndroidView(
                 factory = { ctx ->
@@ -313,12 +339,12 @@ private fun GameTileView(
             GameCard(game)
         }
 
-        // Top-left: audio + source badges.
+        // Top-left: game badges; top-right: what OK does.
         Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (hasAudio) Badge("AUDIO", Palette.Mine, Palette.Bg)
             if (game.state == GameState.IN) Badge("LIVE", Palette.Live, Color.White)
             if (game.redZone) Badge("RED ZONE", Palette.Live.copy(alpha = 0.25f), Palette.Live)
         }
+        if (focused) Badge("OK · change stream", Color.Black.copy(alpha = 0.7f), Palette.Text, Modifier.align(Alignment.TopEnd).padding(8.dp))
         when (status) {
             is TileStatus.Error -> Badge(status.message, Color.Black.copy(alpha = 0.7f), Palette.Warn, Modifier.align(Alignment.Center))
             TileStatus.Loading -> Badge("Loading stream…", Color.Black.copy(alpha = 0.6f), Palette.Muted, Modifier.align(Alignment.Center))
@@ -340,11 +366,11 @@ private fun GameTileView(
                     Text("  ·  ${game.possession ?: ""} $it", color = Palette.Muted, fontSize = 10.sp, maxLines = 1)
                 }
                 Spacer(Modifier.weight(1f))
-                sourceLabel?.let { Text(it, color = Palette.Faint, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                stream?.let { Text(it.label, color = Palette.Faint, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
             if (involved.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 3.dp)) {
-                    involved.take(6).forEach { (p, isMine) ->
+                    involved.take(8).forEach { (p, isMine) ->
                         val accent = if (isMine) Palette.Mine else Palette.Opp
                         Badge("${p.name.substringAfterLast(' ')} ${p.points.pts()}", accent.copy(alpha = 0.22f), accent)
                     }
@@ -359,7 +385,7 @@ private const val TUNER_SURFACE_HEIGHT = 716
 
 /** Shows a channel from the TV's built-in tuner. */
 @Composable
-private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifier) {
+private fun TunerView(source: StreamSource, modifier: Modifier) {
     var status by remember(source.url) { mutableStateOf<String?>("Tuning…") }
     Box(modifier) {
         AndroidView(
@@ -401,7 +427,6 @@ private fun TunerView(source: StreamSource, hasAudio: Boolean, modifier: Modifie
                     val extras = Bundle().apply { source.tuneExtras.forEach { (k, v) -> putInt(k, v) } }
                     view.tune(source.inputId ?: return@AndroidView, Uri.parse(source.url), extras)
                 }
-                view.setStreamVolume(if (hasAudio) 1f else 0f)
             },
             onRelease = { it.reset() },
             modifier = Modifier.fillMaxSize(),
@@ -421,16 +446,16 @@ private fun GameCard(game: NflGame) {
         Text(
             "${game.away.name} @ ${game.home.name}",
             color = Palette.Text,
-            fontSize = 13.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            listOfNotNull(game.broadcast, "no stream found").joinToString(" · "),
+            listOfNotNull(game.broadcast, "no stream found · pick another game below").joinToString(" · "),
             color = Palette.Faint,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             modifier = Modifier.padding(top = 2.dp),
         )
     }
@@ -451,46 +476,125 @@ private fun Badge(text: String, bg: Color, fg: Color, modifier: Modifier = Modif
     )
 }
 
+/** A game in the strip below the video: score, starters on each side, and what it can be watched on. */
 @Composable
-private fun OtherGames(games: List<NflGame>, starters: List<Pair<FantasyPlayer, Boolean>>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        games.take(4).forEach { g ->
-            val mine = starters.count { (p, m) -> m && g.involves(p.proTeam) }
-            val theirs = starters.count { (p, m) -> !m && g.involves(p.proTeam) }
-            Row(
-                Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Palette.Panel)
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (g.state == GameState.IN) {
-                    Box(Modifier.size(5.dp).background(Palette.Live, CircleShape))
-                    Spacer(Modifier.width(4.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(g.scoreLine(), color = Palette.Text, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text(g.statusText(), color = Palette.Faint, fontSize = 8.sp, maxLines = 1)
-                }
-                if (mine > 0) Text("$mine", color = Palette.Mine, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                if (theirs > 0) Text("  $theirs", color = Palette.Opp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+private fun GameChip(
+    game: NflGame,
+    watching: Boolean,
+    source: StreamSource?,
+    mine: Int,
+    theirs: Int,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(6.dp)
+    Column(
+        modifier
+            .width(136.dp)
+            .clip(shape)
+            .background(if (focused) Palette.PanelRaised else Palette.Panel)
+            .border(2.dp, if (focused) Palette.Focus else if (watching) Palette.Mine else Color.Transparent, shape)
+            .onFocusChanged { focused = it.isFocused }
+            .onSelect(onClick)
+            .focusable()
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (game.state == GameState.IN) {
+                Box(Modifier.size(5.dp).background(Palette.Live, CircleShape))
+                Spacer(Modifier.width(4.dp))
             }
+            Text(
+                game.scoreLine(),
+                color = Palette.Text,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (mine > 0) Text("$mine", color = Palette.Mine, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            if (theirs > 0) Text(" $theirs", color = Palette.Opp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
+        Text(
+            listOfNotNull(game.statusText(), game.broadcast).joinToString(" · "),
+            color = Palette.Faint,
+            fontSize = 8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            when {
+                watching -> "▶ Watching"
+                source == null -> "No stream"
+                source.unsure -> "${sourceName(source.kind)} · maybe"
+                else -> sourceName(source.kind)
+            },
+            color = if (watching) Palette.Mine else if (source == null) Palette.Faint else Palette.Muted,
+            fontSize = 8.sp,
+            fontWeight = if (watching) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+/** The streams that can show [StreamChoice.game]; picking one puts it on screen. */
+@Composable
+private fun StreamChoiceDialog(
+    choice: StreamChoice,
+    current: StreamSource?,
+    onPick: (StreamSource) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initial = remember { FocusRequester() }
+    val options = choice.options
+    val game = choice.game
+    val selected = options?.indexOfFirst { it.url == current?.url }?.coerceAtLeast(0) ?: 0
+    Dialog(onDismissRequest = onDismiss) {
+        Column(Modifier.width(480.dp).clip(RoundedCornerShape(10.dp)).background(Palette.PanelRaised).padding(16.dp)) {
+            Text("${game.away.name} @ ${game.home.name}", color = Palette.Text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(listOfNotNull(game.statusText(), game.broadcast).joinToString(" · "), color = Palette.Muted, fontSize = 11.sp)
+            Spacer(Modifier.height(10.dp))
+            when {
+                options == null -> Text("Finding streams…", color = Palette.Muted, fontSize = 12.sp)
+                options.isEmpty() -> Text(
+                    "No streams found for this game. Set up IPTV or the antenna in Settings.",
+                    color = Palette.Muted,
+                    fontSize = 12.sp,
+                )
+                else -> LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    itemsIndexed(options, key = { _, o -> o.url }) { i, option ->
+                        FocusButton(
+                            text = (if (option.url == current?.url) "✓ " else "") + "${sourceName(option.kind)} · ${option.label}",
+                            modifier = Modifier.fillMaxWidth().let { if (i == selected) it.focusRequester(initial) else it },
+                            onClick = { onPick(option) },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            FocusButton(
+                "Cancel",
+                modifier = if (options.isNullOrEmpty()) Modifier.focusRequester(initial) else Modifier,
+                onClick = onDismiss,
+            )
+        }
+    }
+    LaunchedEffect(options == null, options?.isEmpty()) {
+        withFrameNanos { }
+        runCatching { initial.requestFocus() }
     }
 }
 
 @Composable
-private fun EmptyGrid(state: UiState) {
-    val next = state.otherGames.firstOrNull { it.state == GameState.PRE }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            if (state.matchup == null) "Loading your matchup…" else "None of your starters are playing right now",
-            color = Palette.Text,
-            fontSize = 14.sp,
-        )
-        next?.let {
-            Text("Next kickoff: ${it.matchupLabel} · ${it.statusText()}", color = Palette.Muted, fontSize = 11.sp)
-        }
-    }
+private fun EmptyTile(state: UiState) {
+    Text(
+        when {
+            state.matchup == null -> "Loading your matchup…"
+            state.weekGames.isEmpty() -> "None of your starters play this week"
+            else -> "All of this week's games are final"
+        },
+        color = Palette.Text,
+        fontSize = 14.sp,
+    )
 }

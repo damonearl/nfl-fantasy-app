@@ -12,6 +12,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.damonearl.fantasymultiview.streams.SourceKind
 import com.damonearl.fantasymultiview.streams.StreamSource
 import okhttp3.OkHttpClient
 
@@ -22,8 +23,8 @@ sealed interface TileStatus {
 }
 
 /**
- * One ExoPlayer per on-screen game. Only the focused tile has sound, and unfocused tiles are capped
- * at lower resolutions so several decoders can run at once on modest Google TV hardware.
+ * The ExoPlayer for the game on screen, keyed by game id so switching games swaps the stream
+ * (the old one is released first, which IPTV accounts with one connection need).
  * Must be used from the main thread.
  */
 @OptIn(UnstableApi::class)
@@ -33,8 +34,6 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
 
     private val entries = mutableMapOf<String, Entry>()
     private val handler = Handler(Looper.getMainLooper())
-    private var audioGameId: String? = null
-    private var expandedGameId: String? = null
     private var paused = false
 
     /** Observable per-game playback status for the tile overlays. */
@@ -52,18 +51,6 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
                 entries[gameId] = create(gameId, source)
             }
         }
-        applyAudio()
-        applyQuality()
-    }
-
-    fun setAudioFocus(gameId: String?) {
-        audioGameId = gameId
-        applyAudio()
-    }
-
-    fun setExpanded(gameId: String?) {
-        expandedGameId = gameId
-        applyQuality()
     }
 
     fun pauseAll() {
@@ -96,16 +83,17 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                status[gameId] = TileStatus.Error(describe(error))
+                status[gameId] = TileStatus.Error(describe(error, source))
+                // IPTV panels ban clients that reconnect too eagerly.
+                val delay = if (source.kind == SourceKind.PLAYLIST) PLAYLIST_RETRY_MS else RETRY_MS
                 handler.postDelayed({
                     if (entries[gameId]?.player !== player) return@postDelayed
                     player.seekToDefaultPosition()
                     player.prepare()
-                }, RETRY_MS)
+                }, delay)
             }
         }
         player.addListener(listener)
-        player.volume = 0f
         player.setMediaItem(MediaItem.fromUri(source.url))
         player.prepare()
         player.playWhenReady = !paused
@@ -121,28 +109,10 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
         status.remove(gameId)
     }
 
-    private fun applyAudio() {
-        // A focused tile this pool doesn't own (e.g. the TV tuner) keeps every stream here muted.
-        val target = if (audioGameId == null) entries.keys.firstOrNull() else audioGameId
-        entries.forEach { (id, e) -> e.player.volume = if (id == target) 1f else 0f }
-    }
-
-    private fun applyQuality() {
-        val count = entries.size
-        entries.forEach { (id, e) ->
-            val builder = e.player.trackSelectionParameters.buildUpon()
-            when {
-                count <= 1 || id == expandedGameId -> builder.clearVideoSizeConstraints()
-                expandedGameId != null -> builder.setMaxVideoSize(640, 360)
-                count == 2 -> builder.setMaxVideoSize(1920, 1080)
-                else -> builder.setMaxVideoSize(1280, 720)
-            }
-            e.player.trackSelectionParameters = builder.build()
-        }
-    }
-
-    private fun describe(error: PlaybackException) = when (error.errorCode) {
-        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Stream unavailable (tuner busy or link expired)"
+    private fun describe(error: PlaybackException, source: StreamSource) = when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+            if (source.kind == SourceKind.PLAYLIST) "IPTV refused the stream (another device using your connection?)"
+            else "Stream unavailable (tuner busy or link expired)"
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Can't reach stream"
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
@@ -153,5 +123,6 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
 
     private companion object {
         const val RETRY_MS = 5_000L
+        const val PLAYLIST_RETRY_MS = 10_000L
     }
 }

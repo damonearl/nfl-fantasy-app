@@ -23,6 +23,7 @@ import com.damonearl.fantasymultiview.streams.SourceKind
 import com.damonearl.fantasymultiview.streams.StreamResolver
 import com.damonearl.fantasymultiview.streams.StreamSource
 import com.damonearl.fantasymultiview.streams.TvTunerProvider
+import com.damonearl.fantasymultiview.streams.XtreamProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,16 +39,24 @@ import java.util.concurrent.TimeUnit
 
 data class GameTile(val game: NflGame, val stream: StreamSource?)
 
+/** The stream list for a game picked from the strip; [options] is null while it loads. */
+data class StreamChoice(val game: NflGame, val options: List<StreamSource>?)
+
 data class UiState(
     val settings: AppSettings = AppSettings(),
     val league: FantasyLeague? = null,
     val games: List<NflGame> = emptyList(),
-    val tiles: List<GameTile> = emptyList(),
-    /** Relevant games that didn't make the grid (overflow, finished, upcoming). */
-    val otherGames: List<NflGame> = emptyList(),
+    /** Games with a fantasy starter in them: live (most starters first), then upcoming, then final. */
+    val weekGames: List<NflGame> = emptyList(),
+    /** The game on screen and the stream playing it. */
+    val watching: GameTile? = null,
+    /** The best stream each game has, for the game strip. */
+    val available: Map<String, StreamSource> = emptyMap(),
+    val choice: StreamChoice? = null,
     val loading: Boolean = false,
     val error: String? = null,
     val antennaError: String? = null,
+    val playlistError: String? = null,
     val lastUpdated: Instant? = null,
 ) {
     val matchup: FantasyMatchup? get() = league?.matchup
@@ -72,7 +81,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tuner = TvTunerProvider(app)
     // HDHomeRun is only searched for when the TV's own tuner has nothing, or an address is set.
     private val antenna = HdHomeRunProvider(http, json, shouldRun = { it.antennaHost.isNotBlank() || !tuner.hasTuner })
-    private val streams = StreamResolver(listOf(ManualStreamProvider(), tuner, antenna, M3uStreamProvider(http)))
+    private val m3u = M3uStreamProvider(http)
+    private val xtream = XtreamProvider(http, json)
+    private val streams = StreamResolver(listOf(ManualStreamProvider(), tuner, antenna, xtream, m3u))
     val players = PlayerPool(app, http)
 
     private val _state = MutableStateFlow(UiState(settings = settingsStore.settings.value))
@@ -121,6 +132,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The TV tuner's scanned channels as (number, name); empty until the antenna is on and loaded. */
     val antennaChannels: List<Pair<String, String>> get() = tuner.channelChoices
 
+    /** The user's pick from the game strip; null follows the most relevant game. */
+    private var picked: GameTile? = null
+    private var autoGameId: String? = null
+    private var optionsByGame: Map<String, List<StreamSource>> = emptyMap()
+
+    /** Opens the stream list for [game], showing the last known options while fresh ones load. */
+    fun chooseStream(game: NflGame) {
+        _state.update { it.copy(choice = StreamChoice(game, optionsByGame[game.id])) }
+        viewModelScope.launch {
+            val options = streams.candidates(game, _state.value.games, settingsStore.settings.value)
+            optionsByGame = optionsByGame + (game.id to options)
+            _state.update { if (it.choice?.game?.id == game.id) it.copy(choice = StreamChoice(game, options)) else it }
+        }
+    }
+
+    fun dismissChoice() = _state.update { it.copy(choice = null) }
+
+    fun watch(game: NflGame, source: StreamSource) {
+        val tile = GameTile(game, source)
+        picked = tile
+        play(tile)
+        _state.update { it.copy(watching = tile, choice = null) }
+    }
+
+    private fun play(tile: GameTile?) {
+        // Built-in tuner channels play through a TvView, not ExoPlayer.
+        val stream = tile?.stream?.takeIf { it.kind != SourceKind.TUNER }
+        players.sync(if (stream != null) mapOf(tile.game.id to stream) else emptyMap())
+    }
+
     private suspend fun refresh(settings: AppSettings) {
         _state.update { it.copy(loading = true) }
         try {
@@ -132,18 +173,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val league = fantasy.fetch(settings)
                 league to scoreboard.fetch(settings.season, league.scoringPeriod)
             }
-            val (tiles, others) = layoutGames(league.matchup, games, settings)
-            // Built-in tuner tiles play through a TvView, not ExoPlayer.
-            players.sync(tiles.mapNotNull { t -> t.stream?.takeIf { it.kind != SourceKind.TUNER }?.let { t.game.id to it } }.toMap())
+            val week = weekGames(league.matchup, games)
+            optionsByGame = week.associate { it.id to streams.candidates(it, games, settings) }
+            val watching = chooseWatching(week)
+            play(watching)
             _state.update {
                 it.copy(
-                    league = league, games = games, tiles = tiles, otherGames = others,
+                    league = league, games = games, weekGames = week, watching = watching,
+                    available = optionsByGame.mapNotNull { (id, options) -> options.firstOrNull()?.let { id to it } }.toMap(),
                     loading = false, error = null,
                     antennaError = when {
                         !settings.antennaEnabled -> null
                         tuner.hasTuner -> tuner.lastError
                         antenna.tunerCount != null -> antenna.lastError
                         else -> tuner.lastError ?: antenna.lastError
+                    },
+                    playlistError = when {
+                        settings.m3uUrl.isBlank() -> null
+                        XtreamProvider.Account.parse(settings.m3uUrl) != null -> xtream.lastError
+                        else -> m3u.lastError
                     },
                     lastUpdated = Instant.now(),
                 )
@@ -155,43 +203,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * Picks games for the grid: live games with the most fantasy starters first, then the next
-     * kickoffs. Games already on screen keep their position so tiles don't shuffle mid-game.
-     */
-    private suspend fun layoutGames(
-        matchup: FantasyMatchup?,
-        games: List<NflGame>,
-        settings: AppSettings,
-    ): Pair<List<GameTile>, List<NflGame>> {
+    private fun weekGames(matchup: FantasyMatchup?, games: List<NflGame>): List<NflGame> {
         val starters = listOfNotNull(matchup?.mine, matchup?.opponent).flatMap { it.starters }
-        val relevant = games.filter { g -> starters.any { g.involves(it.proTeam) } }
         fun stake(g: NflGame) = starters.count { g.involves(it.proTeam) }
+        val relevant = games.filter { stake(it) > 0 }
+        return relevant.filter { it.state == GameState.IN }.sortedByDescending(::stake) +
+            relevant.filter { it.state == GameState.PRE }.sortedBy { it.start } +
+            relevant.filter { it.state == GameState.POST }.sortedBy { it.start }
+    }
 
-        val live = relevant.filter { it.state == GameState.IN }.sortedByDescending(::stake)
-        val upcoming = relevant.filter { it.state == GameState.PRE }.sortedBy { it.start }
-        val chosen = (live + upcoming).take(settings.maxTiles).map { it.id }.toSet()
-
-        val previousOrder = _state.value.tiles.map { it.game.id }.filter { it in chosen }
-        val ordered = (previousOrder + (live + upcoming).map { it.id }.filter { it in chosen && it !in previousOrder })
-            .map { id -> relevant.first { it.id == id } }
-
-        // Antenna tiles are capped by tuner count; overflow games fall through to other sources.
-        fun capacity(kind: SourceKind) = when (kind) {
-            SourceKind.TUNER -> tuner.tunerCount
-            SourceKind.ANTENNA -> antenna.tunerCount ?: Int.MAX_VALUE
-            else -> Int.MAX_VALUE
-        }
-        val used = mutableMapOf<SourceKind, Int>()
-        val tiles = ordered.map { game ->
-            val candidates = streams.candidates(game, games, settings)
-            val pick = candidates.firstOrNull { (used[it.kind] ?: 0) < capacity(it.kind) }
-            pick?.let { used[it.kind] = (used[it.kind] ?: 0) + 1 }
-            GameTile(game, pick)
-        }
-        val others = relevant.filter { it.id !in chosen }
-            .sortedWith(compareBy({ OTHER_ORDER.indexOf(it.state) }, { it.start }))
-        return tiles to others
+    /**
+     * The user's pick while its game is on the schedule; otherwise the first unfinished game in
+     * strip order that has a stream. An automatic pick sticks until its game ends, so the video
+     * doesn't jump when another game goes live.
+     */
+    private fun chooseWatching(week: List<NflGame>): GameTile? {
+        picked?.let { p -> week.firstOrNull { it.id == p.game.id }?.let { return GameTile(it, p.stream) } }
+        picked = null
+        val open = week.filter { it.state != GameState.POST }
+        fun hasStream(g: NflGame) = optionsByGame[g.id].orEmpty().isNotEmpty()
+        val game = open.firstOrNull { it.id == autoGameId && hasStream(it) }
+            ?: open.firstOrNull(::hasStream)
+            ?: open.firstOrNull()
+            ?: return null
+        autoGameId = game.id
+        return GameTile(game, optionsByGame[game.id]?.firstOrNull())
     }
 
     override fun onCleared() {
@@ -201,6 +237,5 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val POLL_MS = 30_000L
-        val OTHER_ORDER = listOf(GameState.IN, GameState.PRE, GameState.POST)
     }
 }

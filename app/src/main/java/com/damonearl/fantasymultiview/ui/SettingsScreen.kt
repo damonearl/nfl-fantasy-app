@@ -63,8 +63,10 @@ import com.damonearl.fantasymultiview.data.AppSettings
 import com.damonearl.fantasymultiview.data.GameState
 import com.damonearl.fantasymultiview.streams.OtaMatching
 import com.damonearl.fantasymultiview.streams.TvTunerProvider
+import com.damonearl.fantasymultiview.streams.XtreamProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** A text value edited with the TV keyboard. */
 private class TextEdit(
@@ -109,24 +111,15 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 leagueSection(state, firstRow, onUpdate, edit = { editing = it }, pick = { picking = it })
-                section("Screen")
-                item(key = "tiles") {
-                    ChoiceRow(
-                        label = "Games on screen",
-                        options = (1..4).map { it.toString() },
-                        selected = s.maxTiles - 1,
-                        onSelect = { i -> onUpdate { it.copy(maxTiles = i + 1) } },
-                    )
-                }
                 antennaSection(s, antennaChannels, onUpdate, edit = { editing = it }, pick = { picking = it })
                 gamesSection(state, antennaChannels, onUpdate, pick = { picking = it })
                 section("Other video")
                 item(key = "playlist") {
                     ActionRow(
-                        label = "Playlist (M3U) link",
-                        value = s.m3uUrl.ifBlank { "Not set" },
+                        label = "IPTV playlist link",
+                        value = playlistSummary(s.m3uUrl),
                         onClick = {
-                            editing = TextEdit("Playlist link", "An M3U playlist URL. Easier to paste from the phone page.", s.m3uUrl, KeyboardType.Uri) { v ->
+                            editing = TextEdit("Playlist link", "An M3U or Xtream (get.php) link. Easier to paste from the phone page.", s.m3uUrl, KeyboardType.Uri) { v ->
                                 onUpdate { it.copy(m3uUrl = v.trim()) }
                             }
                         },
@@ -403,6 +396,13 @@ private fun SettingRow(
     }
 }
 
+/** The playlist's host only: Xtream links carry the account password. */
+private fun playlistSummary(link: String): String = when {
+    link.isBlank() -> "Not set"
+    XtreamProvider.Account.parse(link) != null -> "Xtream · ${link.toHttpUrlOrNull()?.host}"
+    else -> link.toHttpUrlOrNull()?.host ?: "Set"
+}
+
 @Composable
 private fun StatusLine(state: UiState) {
     val matchup = state.matchup
@@ -415,6 +415,7 @@ private fun StatusLine(state: UiState) {
     }
     Text(text, color = color, fontSize = 12.sp, maxLines = 2)
     state.antennaError?.let { Text("Antenna: $it", color = Palette.Warn, fontSize = 11.sp) }
+    state.playlistError?.let { Text("IPTV: $it", color = Palette.Warn, fontSize = 11.sp) }
 }
 
 @Composable
